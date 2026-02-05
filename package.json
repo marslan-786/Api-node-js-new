@@ -1,7 +1,7 @@
 {
   "name": "numberpanel-proxy",
   "version": "1.0.0",
-  "description": "Proxy API for NumberPanel on Railway/Vercel",
+  "description": "Proxy API for NumberPanel on Railway",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -10,9 +10,10 @@
     "express": "^4.18.2",
     "got": "^11.8.6",
     "tough-cookie": "^4.1.3",
-    "libphonenumber-js": "^1.10.49",
+    "cheerio": "1.0.0-rc.12",
     "moment": "^2.29.4",
-    "moment-timezone": "^0.5.43"
+    "moment-timezone": "^0.5.43",
+    "libphonenumber-js": "^1.10.49"
   },
   "engines": {
     "node": "22.x"
