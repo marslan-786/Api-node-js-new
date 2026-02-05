@@ -165,15 +165,22 @@ app.get('/api/sms', async (_, res) => {
 
     const data = JSON.parse(raw);
 
-    const aaData = data.map(i => [
-      i[0], // time
-      i[1], // country code and range?
-      i[2], // number
-      i[3], // service
-      i[4], // message
-      '$',
-      '0'
-    ]);
+    const aaData = data.map(i => {
+  let country = 'Unknown';
+  if (i[1] && /^\d+$/.test(i[1])) {
+    country = getCountryFromNumber(i[1]);
+  }
+
+  return [
+    i[3],       // Service / Sender
+    country,    // Country Name
+    i[1],       // Number
+    i[0],       // Service Type or label
+    i[2],       // Full Message
+    '$',        // Currency
+    '0'         // Cost
+  ];
+});
 
     cachedSms = {
       sEcho: 1,
