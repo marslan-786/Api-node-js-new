@@ -1,7 +1,7 @@
 const express = require('express');
 const got = require('got');
 const { CookieJar } = require('tough-cookie');
-const cheerio = require('cheerio');
+const cheerio = require('cheerio'); // SMS side ke liye
 const moment = require('moment-timezone');
 const { parsePhoneNumber } = require('libphonenumber-js');
 
@@ -27,12 +27,12 @@ const cookieJar = new CookieJar();
 const client = got.extend({
   cookieJar,
   timeout: 20000,
+  retry: { limit: 2 },
   headers: {
     'User-Agent':
       'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/144 Mobile Safari/537.36',
     'X-Requested-With': 'XMLHttpRequest'
-  },
-  retry: { limit: 2 }
+  }
 });
 
 /* ================= CACHE ================= */
@@ -92,7 +92,7 @@ app.get('/', (_, res) => {
   res.send('Number Panel Proxy Running 🚀');
 });
 
-/* ===== Numbers API ===== */
+/* ================= NUMBERS API ================= */
 app.get('/api/numbers', async (_, res) => {
   try {
     if (!cachedNumbers || Date.now() - lastNumberFetch > NUMBER_CACHE) {
@@ -120,7 +120,24 @@ app.get('/api/numbers', async (_, res) => {
         }
       });
 
-      cachedNumbers = r.body;
+      const rawData = r.body;
+
+      const aaData = rawData.map(item => [
+        item[0], // Country + range
+        item[1], // Dial code
+        item[2], // Number
+        item[3], // Plan
+        item[4], // Price
+        item[5]  // Status SD/SW
+      ]);
+
+      cachedNumbers = {
+        sEcho: 2,
+        iTotalRecords: aaData.length,
+        iTotalDisplayRecords: aaData.length,
+        aaData
+      };
+
       lastNumberFetch = Date.now();
     }
 
@@ -132,7 +149,7 @@ app.get('/api/numbers', async (_, res) => {
   }
 });
 
-/* ===== SMS API ===== */
+/* ================= SMS API ================= */
 app.get('/api/sms', async (_, res) => {
   try {
     const now = Date.now();
@@ -167,7 +184,7 @@ app.get('/api/sms', async (_, res) => {
 
     const aaData = data.map(i => [
       i[0], // time
-      i[1], // country code and range?
+      i[1], // country + range
       i[2], // number
       i[3], // service
       i[4], // message
