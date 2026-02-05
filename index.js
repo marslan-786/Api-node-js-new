@@ -1,6 +1,7 @@
 const express = require('express');
 const got = require('got');
 const { CookieJar } = require('tough-cookie');
+const cheerio = require('cheerio'); // SMS side ke liye
 const moment = require('moment-timezone');
 const { parsePhoneNumber } = require('libphonenumber-js');
 
@@ -10,16 +11,14 @@ const PORT = process.env.PORT || 3000;
 /* ================= CONFIG ================= */
 
 const TARGET_HOST = 'http://51.89.99.105';
-
-/* 🔹 WITHOUT LOGIN NUMBERS API */
+const LOGIN_URL = `${TARGET_HOST}/NumberPanel/login`;
+const SIGNIN_URL = `${TARGET_HOST}/NumberPanel/signin`;
 const NUMBERS2_URL = `${TARGET_HOST}/NumberPanel/agent/res/data_smsnumbers2.php`;
-
-/* 🔹 SMS API (UNCHANGED) */
 const SMS_API_URL =
   'http://147.135.212.197/crapi/st/viewstats?token=RVZUQ0pBUzR5d3NZgYuPiEN0hkRoYpVXiE6BVnJRiVtIlohqU4hmaw==&dt1=2026-02-04 05:18:03&dt2=2126-05-09 05:18:16&records=10';
 
-/* 🔹 SESSION (browser se uthao) */
-const PHPSESSID = process.env.PHPSESSID || 'nus523do9hbsiakb3f28jqtjc5';
+const USERNAME = process.env.PANEL_USER || 'Broken007';
+const PASSWORD = process.env.PANEL_PASS || 'Broken007';
 
 /* ================= CLIENT ================= */
 
@@ -28,14 +27,11 @@ const cookieJar = new CookieJar();
 const client = got.extend({
   cookieJar,
   timeout: 20000,
-  retry: { limit: 0 },
+  retry: { limit: 2 },
   headers: {
     'User-Agent':
-      'Mozilla/5.0 (Linux; Android 13; V2040) AppleWebKit/537.36 Chrome/144 Mobile Safari/537.36',
-    'Accept': 'application/json, text/javascript, */*; q=0.01',
-    'X-Requested-With': 'XMLHttpRequest',
-    'Referer': `${TARGET_HOST}/NumberPanel/agent/MySMSNumbers2`,
-    'Cookie': `PHPSESSID=${PHPSESSID}`
+      'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/144 Mobile Safari/537.36',
+    'X-Requested-With': 'XMLHttpRequest'
   }
 });
 
@@ -54,9 +50,7 @@ const SMS_COOLDOWN = 5000; // 5 sec
 
 function getCountryFromNumber(number) {
   try {
-    const num = number.toString().startsWith('+')
-      ? number
-      : '+' + number;
+    const num = number.toString().startsWith('+') ? number : '+' + number;
     const phone = parsePhoneNumber(num);
     if (!phone || !phone.country) return 'International';
     return new Intl.DisplayNames(['en'], { type: 'region' }).of(phone.country);
@@ -65,58 +59,100 @@ function getCountryFromNumber(number) {
   }
 }
 
+async function ensureLoggedIn() {
+  try {
+    const loginPage = await client.get(LOGIN_URL);
+    const $ = cheerio.load(loginPage.body);
+
+    const captcha = $('label:contains("What is")').text();
+    let captAnswer = '';
+    const m = captcha.match(/(\d+)\s*\+\s*(\d+)/);
+    if (m) {
+      captAnswer = (parseInt(m[1]) + parseInt(m[2])).toString();
+    }
+
+    await client.post(SIGNIN_URL, {
+      form: {
+        username: USERNAME,
+        password: PASSWORD,
+        capt: captAnswer
+      },
+      headers: { Referer: LOGIN_URL }
+    });
+
+    console.log('✅ Logged in to panel');
+  } catch (e) {
+    console.error('❌ Login error', e.message);
+  }
+}
+
 /* ================= ROUTES ================= */
 
 app.get('/', (_, res) => {
-  res.send('✅ NumberPanel Proxy Running');
+  res.send('Number Panel Proxy Running 🚀');
 });
 
-/* =====================================================
-   🔢 NUMBERS API (NO LOGIN)
-===================================================== */
-
+/* ================= NUMBERS API ================= */
 app.get('/api/numbers', async (_, res) => {
   try {
-    if (cachedNumbers && Date.now() - lastNumberFetch < NUMBER_CACHE) {
-      return res.json(cachedNumbers);
+    if (!cachedNumbers || Date.now() - lastNumberFetch > NUMBER_CACHE) {
+      await ensureLoggedIn();
+
+      const params = new URLSearchParams({
+        frange: '',
+        fclient: '',
+        fallocated: '',
+        sEcho: 2,
+        iColumns: 8,
+        sColumns: ',,,,,,,',
+        iDisplayStart: 0,
+        iDisplayLength: -1,
+        iSortCol_0: 0,
+        sSortDir_0: 'asc',
+        iSortingCols: 1,
+        _: Date.now()
+      });
+
+      const r = await client.get(`${NUMBERS2_URL}?${params.toString()}`, {
+        responseType: 'json',
+        headers: {
+          Referer: `${TARGET_HOST}/NumberPanel/agent/MySMSNumbers2`
+        }
+      });
+
+      const rawData = r.body;
+
+      const aaData = rawData.map(item => [
+        item[0], // Country + range
+        item[1], // Dial code
+        item[2], // Number
+        item[3], // Plan
+        item[4], // Price
+        item[5]  // Status SD/SW
+      ]);
+
+      cachedNumbers = {
+        sEcho: 2,
+        iTotalRecords: aaData.length,
+        iTotalDisplayRecords: aaData.length,
+        aaData
+      };
+
+      lastNumberFetch = Date.now();
     }
-
-    const params = new URLSearchParams({
-      frange: '',
-      fclient: '',
-      fallocated: '',
-      sEcho: 2,
-      iColumns: 8,
-      sColumns: ',,,,,,,',
-      iDisplayStart: 0,
-      iDisplayLength: -1,
-      iSortCol_0: 0,
-      sSortDir_0: 'asc',
-      iSortingCols: 1,
-      _: Date.now()
-    });
-
-    const r = await client.get(`${NUMBERS2_URL}?${params.toString()}`, { responseType: 'json' });
-
-    cachedNumbers = r.body;
-    lastNumberFetch = Date.now();
 
     res.json(cachedNumbers);
   } catch (e) {
     console.error('❌ Numbers error:', e.message);
-    if (cachedNumbers) return res.json(cachedNumbers);
-    res.status(500).json({ error: 'Failed to fetch numbers (no-login)' });
+    if (cachedNumbers) res.json(cachedNumbers);
+    else res.status(500).json({ error: 'Failed to fetch numbers' });
   }
 });
 
-/* =====================================================
-   ✉️ SMS API (UNCHANGED)
-===================================================== */
-
+/* ================= SMS API ================= */
 app.get('/api/sms', async (_, res) => {
   try {
     const now = Date.now();
-
     if (cachedSms && now - lastSmsFetch < SMS_COOLDOWN) {
       return res.json(cachedSms);
     }
@@ -141,20 +177,19 @@ app.get('/api/sms', async (_, res) => {
 
     if (!raw.startsWith('[')) {
       if (cachedSms) return res.json(cachedSms);
-      throw new Error('Invalid SMS JSON');
+      throw new Error('Invalid JSON');
     }
 
     const data = JSON.parse(raw);
 
     const aaData = data.map(i => [
-      i[3], // Date
-      getCountryFromNumber(i[1]), // Country
-      i[1], // Number
-      i[0], // Service
-      i[2], // Message
+      i[0], // time
+      i[1], // country + range
+      i[2], // number
+      i[3], // service
+      i[4], // message
       '$',
-      '€',
-      0.005
+      '0'
     ]);
 
     cachedSms = {
@@ -173,7 +208,6 @@ app.get('/api/sms', async (_, res) => {
 });
 
 /* ================= START ================= */
-
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 Server listening on port ${PORT}`);
 });
